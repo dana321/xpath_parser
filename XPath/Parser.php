@@ -127,8 +127,8 @@ class XPath_Parser
 		return $node;
 	}
 	private function _scan2(array $a){
-		 $loc='';
-		 foreach($a as $n) {
+		$loc='';
+		foreach($a as $n) {
 			 $loc .= $n['axis'].'::';
 			 $loc .= $n['localName'];
 			 if (isset($n['position'])) {
@@ -306,7 +306,7 @@ class XPath_Parser
 		else return null;
 	}
 	protected function operator(array &$ret){
-		if (preg_match(',^\s*(<=|<|>=|=|!=)\s*,',$this->currentString, $m)) {
+		if (preg_match(',^\s*(<=|<|>|>=|=|!=)\s*,',$this->currentString, $m)) {
 			$this->forward(strlen($m[0]));
 			$ret['operator']=$m[1];
 			return true;
