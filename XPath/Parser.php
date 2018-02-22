@@ -66,116 +66,68 @@ class XPath_Parser
 		$this->nextChar=isset($this->buffer[$this->pointer+1]) ? $this->buffer[$this->pointer+1] : '';
 		$this->currentString=substr($this->buffer, $this->pointer);
 	}
-	public function getLocalization(){
-		$a=$this->getArray();
-		return '/'.$this->_scan2($a['location']);
-	}
 	public function getArray(){
 		if (is_null($this->outputArray)) {
-			$this->outputArray=array();
+			$this->outputArray=[];
 			$this->location($this->outputArray);
+			
+			$newarray=[];
+			$paracount=0;
+			$paraitemnames='';
+			$paraitemaxis='';
+			
+			foreach($this->outputArray['location'] as $name=>$item){
+				if(isset($item['parenthesis'])){
+					if($item['parenthesis']==')'){
+						$paracount--;
+					}
+					else if($item['parenthesis']=='('){
+						$paracount++;
+					}
+				}
+				else{
+					if($paracount){
+						if(isset($item['axis']) && isset($item['localName'])){
+							if($paraitemnames!=''){
+								$namearray=explode('|',$paraitemnames);
+							}
+							else{
+								$namearray=[];
+							}
+							$namearray[]=$item['localName'];
+							$paraitemnames=implode('|',$namearray);
+							$paraitemaxis=$item['axis'];
+						}
+					}
+					else{
+						if($paraitemaxis!='' && $paraitemnames!=''){
+							$item['axis']=$paraitemaxis;
+							$item['localName']=$paraitemnames;
+							$paraitemaxis='';
+							$paraitemnames='';
+						}
+						$newarray['location'][]=$item;
+					}
+				}
+			}
+			$this->outputArray=$newarray;
 		}
 		return $this->outputArray;
 	}
-	public function getTree(){
-		if (is_null($this->outputTree)) {
-			$a=$this->getArray();
-			$n=new stdClass;
-			$n->depth=-1;
-			$this->_scan1($a['location'], $n);			
-			$this->outputTree=$n->trunk;
-		}
-		return $this->outputTree;
-	}
-	private function _scan1(array $a, $z=null){
-		$previous=$z;
-		foreach($a as $n) {
-			$node=new stdClass;
-			$node->localName=$n['localName'];
-			$node->nodeType=$n['axis'] === 'attribute' ? XMLReader::ATTRIBUTE : XMLReader::ELEMENT;
-			if ($n['axis'] !== 'descendant-or-self') {
-				$node->depth=$n['axis'] === 'attribute'  ? $previous->depth : ($previous->depth+1);
-			}
-			else {
-				$node->mindepth=$previous->depth+1;
-			}
-
-			if(isset($n['position']))
-				$node->position=$n['position'];
-
-
-			if (isset($n['condition'])) {
-				$node->branchs=array();
-				foreach($n['condition'] as $c) {
-					$x=new stdClass;
-					$x->depth=$node->depth;
-					$p=$this->_scan1($c['location'], $x);
-					if (isset($c['literal']))
-						$p->value=$c['literal'];
-					if (isset($c['operator']))
-						$p->operator=$c['operator'];
-					if (isset($c['logical']))
-						$p->logical=$c['logical'];
-					$node->branchs[]=$x->trunk;
-				}
-			}
-			if (!is_null($previous)) {
-				$previous->trunk=$node;
-			}
-			$previous=$node;
-		}
-		return $node;
-	}
-	private function _scan2(array $a){
-		$loc='';
-		foreach($a as $n) {
-			 $loc .= $n['axis'].'::';
-			 $loc .= $n['localName'];
-			 if (isset($n['position'])) {
-				 $loc .= '['.$n['position'].']';
-			 }
-
-			 if (isset($n['condition'])) {
-				 $loc .= '[';
-				 $ope=null;
-				 foreach($n['condition'] as $k => $c) {
-					 if ($k > 0 and isset($c['logical'])) {
-						 $loc .= ' '.$c['logical'].' ';
-					 }
-					 if ($k == 0 and isset($c['logical'])) {
-						 $ope=$c['logical'];
-					 }
-					 else if ($k > 0 and is_null($ope)) {
-						 $loc .= ' and ';
-					 }
-					 else if ($k > 0 and !is_null($ope)) {
-						 $loc .= ' '.$ope.' ';
-						 $ope=null;
-					 }
-
-					 $loc .= $this->_scan2($c['location']);
-					 if (isset($c['operator']))
-						 $loc .=  ' '.$c['operator'].' ';
-					 if (isset($c['literal']))
-						 $loc .=  '\''.addcslashes($c['literal'], "'").'\'';
-				 }
-				 $loc .= ']';
-			 }
-			 $loc .= '/';
-		}
-		return rtrim($loc, '/');
-	}
 	protected function location(array &$ret){
-		$ret['location']=array();
+		$ret['location']=[];
 		$i=0;
 		do {
-			$ret['location'][$i]=array();
+			$ret['location'][$i]=[];
+			while($this->parenthesis_or_item($ret['location'],$i)){}
 			$ctrl=$this->axis($ret['location'][$i]);
+			
 			if (is_null($ctrl)) {
 				unset($ret['location'][$i]);
 				break;
 			}
-
+			while($this->parenthesis_or_item($ret['location'],$i)){}
+			
 			do {
 				$c1=$this->position($ret['location'][$i]);
 				$c2=$this->condition($ret['location'][$i]);
@@ -187,6 +139,26 @@ class XPath_Parser
 		if ($i === 0) return null;
 		else return true;
 	}
+
+	protected function parenthesis_or_item(array &$ret,&$i){
+		if (preg_match(',^\s*(\(|\))\s*,i', $this->currentString, $m)) {
+			
+			if($i!=0)$i++;
+			$ret[$i]=['parenthesis'=>$m[1]];
+			$i++;
+			
+			$ret[$i]=[];
+			$this->forward(strlen($m[0]));
+			return true;
+		}
+		else if (preg_match(',^\s*(\|)\s*,i', $this->currentString, $m)) {
+			$ret[++$i]=['or'=>$m[1]];
+			$this->forward(strlen($m[0]));
+			return true;
+		}
+		return false;
+	}
+	
 	protected function axis(array &$ret){
 		if (preg_match(',^\s*[/]?(ancestor::|ancestor-or-self::|descendant::|descendant-or-self::|child::|attribute::|parent::|self::|following::|following-sibling::|namespace::|precesing::|preceding-sibling::)([\w\(\):{1}]+),i', $this->currentString, $m)) {
 			$this->forward(strlen($m[0]));
@@ -221,7 +193,7 @@ class XPath_Parser
 			$ret['localName']='';
 			return true;
 		}
-		else if(preg_match(',^\s*[/]?([\w:{1}]+),i', $this->currentString, $m)) {
+		else if(preg_match(',^\s*[/]?([\w:{1}]+(\(\))?),i', $this->currentString, $m)) {
 			$this->forward(strlen($m[0]));
 			$ret['axis']='child';
 			$ret['localName']=$m[1];
@@ -241,9 +213,15 @@ class XPath_Parser
 		}
 		return null;
 	}
+	
+	
+
+
+	
 	protected function parenthesis(array &$ret,&$i){
 		if (preg_match(',^\s*((\w+)?\(|\))\s*,i', $this->currentString, $m)) {
 			if(isset($m[2])){
+				if($m[2]=='position')return false;
 				$ret[++$i]=['function'=>$m[2],
 				'parenthesis'=>'('];
 			}
@@ -260,14 +238,14 @@ class XPath_Parser
 			$this->forward(strlen($m[0]));
 
 			if (!isset($ret['condition'])) {
-				$ret['condition']=array();
+				$ret['condition']=[];
 				$i=0;
 			}
 			else {
 				$i=count($ret['condition']);
 			}
 			do {
-				$ret['condition'][$i]=array();
+				$ret['condition'][$i]=[];
 				
 				while($this->parenthesis($ret['condition'],$i)){}
 				
@@ -340,6 +318,103 @@ class XPath_Parser
 		}
 		else return null;
 	}
+	
+	// additional supplimentary functions
+	
+	public function getLocalization(){
+		$a=$this->getArray();
+		return '/'.$this->_scan2($a['location']);
+	}
+	public function getTree(){
+		if (is_null($this->outputTree)) {
+			$a=$this->getArray();
+			$n=new stdClass;
+			$n->depth=-1;
+			$this->_scan1($a['location'], $n);			
+			$this->outputTree=$n->trunk;
+		}
+		return $this->outputTree;
+	}
+	private function _scan1(array $a, $z=null){
+		$previous=$z;
+		foreach($a as $n) {
+			$node=new stdClass;
+			$node->localName=$n['localName'];
+			$node->nodeType=$n['axis'] === 'attribute' ? XMLReader::ATTRIBUTE : XMLReader::ELEMENT;
+			if ($n['axis'] !== 'descendant-or-self') {
+				$node->depth=$n['axis'] === 'attribute'  ? $previous->depth : ($previous->depth+1);
+			}
+			else {
+				$node->mindepth=$previous->depth+1;
+			}
+
+			if(isset($n['position']))
+				$node->position=$n['position'];
+
+
+			if (isset($n['condition'])) {
+				$node->branchs=[];
+				foreach($n['condition'] as $c) {
+					$x=new stdClass;
+					$x->depth=$node->depth;
+					$p=$this->_scan1($c['location'], $x);
+					if (isset($c['literal']))
+						$p->value=$c['literal'];
+					if (isset($c['operator']))
+						$p->operator=$c['operator'];
+					if (isset($c['logical']))
+						$p->logical=$c['logical'];
+					$node->branchs[]=$x->trunk;
+				}
+			}
+			if (!is_null($previous)) {
+				$previous->trunk=$node;
+			}
+			$previous=$node;
+		}
+		return $node;
+	}
+	private function _scan2(array $a){
+		$loc='';
+		foreach($a as $n) {
+			 $loc .= $n['axis'].'::';
+			 $loc .= $n['localName'];
+			 if (isset($n['position'])) {
+				 $loc .= '['.$n['position'].']';
+			 }
+
+			 if (isset($n['condition'])) {
+				 $loc .= '[';
+				 $ope=null;
+				 foreach($n['condition'] as $k => $c) {
+					 if ($k > 0 and isset($c['logical'])) {
+						 $loc .= ' '.$c['logical'].' ';
+					 }
+					 if ($k == 0 and isset($c['logical'])) {
+						 $ope=$c['logical'];
+					 }
+					 else if ($k > 0 and is_null($ope)) {
+						 $loc .= ' and ';
+					 }
+					 else if ($k > 0 and !is_null($ope)) {
+						 $loc .= ' '.$ope.' ';
+						 $ope=null;
+					 }
+
+					 $loc .= $this->_scan2($c['location']);
+					 if (isset($c['operator']))
+						 $loc .=  ' '.$c['operator'].' ';
+					 if (isset($c['literal']))
+						 $loc .=  '\''.addcslashes($c['literal'], "'").'\'';
+				 }
+				 $loc .= ']';
+			 }
+			 $loc .= '/';
+		}
+		return rtrim($loc, '/');
+	}
+	
+	
 }
 
 
